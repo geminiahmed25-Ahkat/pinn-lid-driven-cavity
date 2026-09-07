@@ -126,8 +126,13 @@ Indicative run times (CPU, 5 threads): baseline 6×5 ≈ 1 h; `architecture` lar
 
 ## 6. License
 
-Not defined — to be chosen by the author before publication.
+Copyright (c) 2026 Ahmed Beniaiche
 
+This project is licensed under the Apache License, Version 2.0.
+You may use, reproduce, modify, and redistribute this software
+in accordance with the terms and conditions of the Apache License 2.0.
+
+The full license text is provided in the `LICENSE` file.
 ## 7. Statements for the manuscript
 
 1. The historical code (`historical_baseline/`) has **never been modified**.

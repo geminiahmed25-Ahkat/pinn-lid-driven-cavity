@@ -1,0 +1,610 @@
+\documentclass[aip,pof,reprint,superscriptaddress]{revtex4-2}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+
+\newcommand{\re}{\mathrm{Re}}
+
+\begin{document}
+
+\title{Physics-informed identification and independent validation of conditional modal collapse in active control of lid-driven cavity flow}
+
+\author{Ahmed Beniaiche}
+\email{beniaiche\_ahmed25@yahoo.fr}
+\affiliation{Laboratory of Fluid Mechanics, \'Ecole Militaire Polytechnique, Algiers, Algeria}
+
+\author{Abderrahim Larabi}
+\affiliation{Laboratory of Fluid Mechanics, \'Ecole Militaire Polytechnique, Algiers, Algeria}
+
+\author{Abderrahim Dourari}
+\affiliation{Laboratory of Turbomachinery, \'Ecole Militaire Polytechnique, Algiers, Algeria}
+
+\author{Mbarek Belkadi}
+\affiliation{Laboratory of Turbomachinery, \'Ecole Militaire Polytechnique, Algiers, Algeria}
+
+\date{\today}
+
+\begin{abstract}
+Physics-informed neural networks (PINNs) are used as identification tools for the distributed lid actuation that drives a two-dimensional lid-driven cavity flow, under an objective that combines viscous-dissipation reduction with a prescribed time-averaged control energy. The actuation is parameterized in a truncated Fourier basis and identified over the Reynolds-number range $100 \le \re \le 1000$. At $\re=100$ and $500$, the identified control is dominated by a single second spatial Fourier mode, which concentrates $91.6\%$ and $92.2\%$ of the control energy, respectively. At $\re=1000$ the second mode remains the largest individual contribution, but its share decreases to $64.0\%$ while time-dependent content grows to $32.2\%$, indicating that the modal concentration is a property of the lower part of the tested range. The dominance of the second spatial mode is reproduced across activation-energy targets up to $E^* \simeq 0.25$, across a $2{:}1$ aspect-ratio change, and across several tested network architectures and basis sizes, but it is conditional on the control parametrization: replacing the Fourier basis with a modified Chebyshev basis yields a temporally dominated branch with a negligible second-mode share. An independent lattice-Boltzmann (LBM) solver reproduces the Fourier branch as a quasi-stationary flow whose fluctuating kinetic energy is below $1\%$ of the total, whereas the Chebyshev branch fails the same admissibility test, with fluctuating-to-total kinetic ratios between $44\%$ and $847\%$. Combined with a loss-ablation study, which identifies the branch-selection mechanism, and a seed study, which reveals several admissible branches of comparable objective, the results indicate that the recovered second-mode-dominated branch is a reproducible, parametrization-conditioned feature rather than a universal optimum. The study illustrates the role of independent numerical verification in physics-informed control identification.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}\label{sec:intro}
+
+\subsection{Active flow control and reduced-dimensional control}
+
+Active flow control is a central problem in fluid mechanics, with applications ranging from drag reduction in aerodynamics to mixing enhancement in chemical processes \cite{brunton2015closed,gad2000flow}. A canonical benchmark is the lid-driven cavity, which contains the primary and secondary vortex structures encountered in confined flows within a simple geometry \cite{ghia1982high}. Classical open-loop and adjoint-based optimal control strategies \cite{bewley2001dns} are mathematically rigorous but computationally demanding, requiring forward and backward integration of the Navier--Stokes equations. In parallel, reduced-order and basis-based control approaches have shown that the effective dimensionality of weakly unsteady confined flows can be much lower than the discretized state dimension. Proper orthogonal decomposition (POD) and related modal bases have long been used to construct low-order dynamical models and to design reduced-order controllers for bluff-body and cavity flows \cite{rowley2004model,bergmann2005optimal,noack2003hierarchy,taira2017modal}. In these approaches the control space, the state space, or both are truncated onto a precomputed basis, and the coefficients are optimized. A related strategy is basis-function control, in which spatially distributed actuators are parameterized by a family of modal profiles and the modal amplitudes become the optimization variables.
+
+\subsection{Physics-informed optimization}
+
+Machine-learning methods, in particular deep reinforcement learning (DRL) \cite{rabault2019artificial} and physics-informed neural networks (PINNs) \cite{raissi2019physics,karniadakis2021physics}, have recently emerged as flexible alternatives for discovering flow-control policies and for solving inverse problems. PINNs embed the governing partial differential equations into the training loss through automatic differentiation and therefore require no external solver during training \cite{raissi2020hidden,jin2021nsfnets,sun2020surrogate,wang2020understanding}. They have been applied to the forward simulation of the lid-driven cavity and other canonical flows with impressive fidelity. Their use as \emph{identification} tools---in which the network produces not only the flow but also an explicit control law---has attracted increasing attention \cite{cuomo2022,velivelli2024pinn,zeinhofer2022}.
+
+\subsection{Gap in control-space dimensionality and branch identification}
+
+Most AI-based control studies report numerical control signals or optimized scalar fields that reduce a prescribed objective, but they rarely expose the structure of the control law itself. A key open question is therefore not only whether physics-informed optimization \emph{can} find an effective control, but what \emph{modal structure} is selected when a nominally high-dimensional control space is optimized under physical constraints. It remains unclear (i) whether such optimization produces genuinely low-dimensional control structures, (ii) how those structures depend on the Reynolds number and on the actuation intensity, and (iii) whether they are robust to the choice of control parametrization and optimization initialization. Moreover, independent physical validation of identified control branches---for example, by an entirely different numerical method---is rarely incorporated into such analyses.
+
+\subsection{Objectives and contributions}
+
+In this work we address these questions for the lid-driven cavity with a distributed lid actuation, using a parametric PINN that identifies the control law over a continuous Reynolds range while solving the flow. Our contributions are fourfold. First, we formulate and train a parametric PINN that simultaneously satisfies the Navier--Stokes equations and identifies a spatio-temporal lid-actuation law over $100 \le \re \le 1000$. Second, we identify and quantify a Fourier branch of the control space that is strongly dominated by a single second spatial mode, and we measure its energy fraction and temporal content. Third, we characterize the robustness and the limits of this branch through systematic campaigns covering the actuation-energy target, random initialization seeds, loss-term ablation, network architecture, mode count, and aspect ratio. Fourth, we subject the identified branches to independent verification with a lattice-Boltzmann solver, and we discriminate between the Fourier branch, which is reproduced as a low-dissipation quasi-stationary flow, and a modified-Chebyshev branch, which fails the adopted admissibility test.
+
+Throughout the paper we deliberately use the term \emph{identification} rather than discovery, and we refer to the recovered states as \emph{candidate control branches} rather than optimal controls, because our experiments demonstrate that the loss landscape admits several solutions of comparable objective value. We do not claim a global optimum, a uniqueness result, or a representation-independent property of the flow.
+
+\section{Problem formulation}\label{sec:problem}
+
+\subsection{Geometry and governing equations}
+
+We consider the incompressible flow in a square lid-driven cavity of side length $L$ (reference length) with a moveable top lid, in the steady and weakly unsteady regime $100 \le \re \le 1000$. The reference velocity is the scale of the lid motion $U_0$, and the kinematic viscosity $ u $ is set by $\re = U_0 L/ u $; for brevity the subscript is omitted below. The nondimensional incompressible Navier--Stokes equations are
+\begin{align}
+\frac{\partial \bm{u}}{\partial t} + \bm{u}\cdot\nabla\bm{u} &= -\nabla p + \frac{1}{\re}\nabla^2\bm{u}, \label{eq:ns}\\
+\nabla\cdot\bm{u} &= 0, \label{eq:cont}
+\end{align}
+with $\bm{u}=(u,v)$. No-slip conditions are imposed on the three still walls, and the top lid velocity is prescribed by the control law $U_{\mathrm{lid}}(x,t)$ discussed below.
+
+\subsection{Control objective and control energy}
+
+The control objective combines the reduction of the viscous dissipation of the controlled flow with a penalty on the time-averaged kinetic energy of the actuation. The control energy is defined consistently throughout this study as
+\begin{equation}
+E = \bigl\langle U_{\mathrm{lid}}^2 \bigr\rangle,
+\end{equation}
+where $\langle \cdot \rangle$ denotes the average over the lid coordinate and over the actuation period. The $\tfrac12$ kinetic-energy convention is not used. The dissipation of the flow is
+\begin{equation}
+\varepsilon = \iint_\Omega \Phi\,\mathrm{d}\Omega,
+\qquad
+\Phi = \frac{2}{\re}\left[
+\left(\frac{\partial u}{\partial x}\right)^{2}
++\left(\frac{\partial v}{\partial y}\right)^{2}
++\frac12\left(\frac{\partial u}{\partial y}+\frac{\partial v}{\partial x}\right)^{2}
+\right].
+\end{equation}
+The activation-energy target is fixed at $E^*=0.25$ for the baseline study, and its influence is examined separately in Section~\ref{sec:energy}.
+
+\subsection{Reynolds-number range}
+
+The identification is performed over the Reynolds set $\re\in\{100,500,1000\}$, which spans the steady and weakly unsteady regimes of the cavity. Continuous-Reynolds training is obtained by providing the normalized Reynolds number as an additional network input.
+
+\section{Physics-informed control formulation}\label{sec:methods}
+
+\subsection{Parametric PINN}
+
+The flow variables $\bm{u}$ and $p$ are predicted by a fully connected feed-forward network whose inputs are $(x,y,t,\widetilde{\re})$, with
+\begin{equation}
+\widetilde{\re} = 2\frac{\re-\re_{\min}}{\re_{\max}-\re_{\min}} - 1
+\end{equation}
+a normalized Reynolds number. The network head uses hidden layers $[128,128,96,64]$ with hyperbolic-tangent activations. A second, smaller head with hidden layers $[64,64,48]$ predicts the modal coefficients of the control law from the Reynolds number alone. All computations are carried out in 64-bit arithmetic.
+
+The Navier--Stokes residuals are evaluated at $N_{\mathrm{phys}}=4000$ interior collocation points and enforced through automatic differentiation; the boundary conditions are enforced at $N_{\mathrm{bc}}=600$ boundary points. We emphasize that \emph{no external Navier--Stokes or CFD solver is called during PINN training}: the equations are enforced by collocation with mean-square residuals, not by coupling to a discretized solver. The independent LBM solver described in Section~\ref{sec:lbm} is used strictly for post-training verification.
+
+\subsection{Fourier control parametrization}
+
+The lid actuation is represented as a truncated spatio-temporal Fourier expansion with a unique indexing convention. We write
+\begin{equation}
+U_{\mathrm{lid}}(x,t,\re) = \sum_{m=1}^{N_x}\sum_{n=0}^{N_t-1} a_{mn}\,\sin\!\left(\frac{m\pi x}{L_x}\right)\cos(n\pi t),
+\label{eq:lid}
+\end{equation}
+with $L_x$ the cavity width. In this convention the mode $m=2$ corresponds to $\sin(2\pi x/L_x)$, i.e., the second spatial harmonic of the lid profile; this is the mode referred to as ``second spatial mode'' throughout the paper, and the notation is chosen to avoid any ambiguity with the zero-indexed internal indexing used in some of the codes. The baseline configuration uses $N_x=6$ spatial modes and $N_t=5$ temporal harmonics, i.e., 30 nominally available spatio-temporal degrees of freedom. The modal amplitudes $a_{mn}(\re)$ are produced by the coefficient head of the network, which depends on the Reynolds number only.
+
+\subsection{Modal decomposition and metrics}
+
+After training, the identified control is projected onto the spatial and temporal harmonics of Eq.~\eqref{eq:lid}. We define the \emph{second-mode energy fraction}
+\begin{equation}
+f_2 = \frac{\bigl(a_{20}(\re)\,\bigr)^2}{\sum_{mn} a_{mn}^2},
+\end{equation}
+and the \emph{temporal energy fraction}
+\begin{equation}
+f_t = \frac{\sum_{m}\sum_{n\ge1} a_{mn}^2}{\sum_{mn} a_{mn}^2}.
+\end{equation}
+These two metrics characterize, respectively, the modal concentration of the control in the second spatial harmonic and the weight of its time-dependent content. A control whose energy is concentrated in a stationary second harmonic is characterized by $f_2\to1$ and $f_t\to0$.
+
+\subsection{Multi-objective loss}
+
+The loss assembled during training is
+\begin{equation}
+\mathcal{L} = \lambda_{\mathrm{pde}}\,\mathcal{L}_{\mathrm{pde}}
++ \lambda_{\mathrm{bc}}\,\mathcal{L}_{\mathrm{bc}}
++ \lambda_{\mathrm{diss}}\,\mathcal{L}_{\mathrm{diss}}
++ \lambda_{\mathrm{ctrl}}\,\mathcal{L}_{\mathrm{ctrl}}
++ \lambda_{\mathrm{var}}\,\mathcal{L}_{\mathrm{var}}
++ \lambda_{\re}\,\mathcal{L}_{\re},
+\end{equation}
+where $\mathcal{L}_{\mathrm{pde}}$ and $\mathcal{L}_{\mathrm{bc}}$ are the momentum, continuity, and boundary residuals. The dissipation term is $\mathcal{L}_{\mathrm{diss}}\propto\varepsilon$, and the control-energy objective is
+\begin{equation}
+\mathcal{L}_{\mathrm{ctrl}} = \bigl(E - E^*\bigr)^2,
+\end{equation}
+a symmetric penalty that discourages both under-energetic and over-energetic actuations. The variance term
+\begin{equation}
+\mathcal{L}_{\mathrm{var}} = -\log\bigl(\mathrm{Var}(U_{\mathrm{lid}}) + 10^{-5}\bigr)
+\end{equation}
+penalizes spatially uniform actuations. Finally, the Reynolds-consistency term
+\begin{equation}
+\mathcal{L}_{\re} = \max\!\bigl(0,\; \delta - \lvert E(\re=100)-E(\re=1000)\rvert \bigr)
+\end{equation}
+mildly regularizes the Reynolds dependence of the control energy. The baseline weights are $\lambda_{\mathrm{pde}}=1$, $\lambda_{\mathrm{bc}}=15$, $\lambda_{\mathrm{diss}}=0.05$, $\lambda_{\mathrm{ctrl}}=200$, $\lambda_{\mathrm{var}}=1$, and $\lambda_{\re}=2$.
+
+\subsection{Role of the variance regularization}
+
+The variance regularization is introduced as an \emph{optimization bias} to discourage overly uniform control distributions. As we show in Section~\ref{sec:ablation}, this term is not inert: its removal changes the selected modal branch. We therefore treat $\mathcal{L}_{\mathrm{var}}$ as an explicit branch-selection mechanism whose effect is assessed by loss-ablation experiments, and we do not attribute to it any physical meaning beyond its role in the objective. Similarly, the Reynolds-consistency term is included as a regularizing constraint on the learned Reynolds dependence; its sensitivity is assessed in the ablation study and is found to be small.
+
+\subsection{Training procedure}
+
+Training proceeds in two stages: a pre-training phase of 300 epochs in which the flow field is established with the control coefficients frozen, followed by the main joint optimization phase of 3000 epochs. The optimizer is Adam \cite{kingma2015adam} with a learning rate of $8\times10^{-4}$. Interiors and boundaries are resampled each epoch. Further implementation details, including point-sampling and the exact schedule, are provided in the supplementary material.
+
+\section{Systematic robustness and parametrization analysis}\label{sec:robustness}
+
+This section describes the campaigns that characterize the robustness and the limits of the identified branch. The results are reported in Section~\ref{sec:results}.
+
+\subsection{Initialization sensitivity}
+Ten independent trainings are run at $\re=500$ with the Fourier basis and fixed hyperparameters, differing only in the random initialization of the network and the collocation points.
+
+\subsection{Loss ablation}
+Each term of the loss is removed or reweighted (no-$\mathcal{L}_{\mathrm{var}}$, no-$\mathcal{L}_{\re}$, no-$\mathcal{L}_{\mathrm{diss}}$, no-$\mathcal{L}_{\mathrm{var}},\mathcal{L}_{\re}$, halved and doubled $\lambda_{\mathrm{var}}$, $\lambda_{\mathrm{diss}}$, $\lambda_{\mathrm{ctrl}}$) and retrained at $\re=500$.
+
+\subsection{Network architecture and mode count}
+The network head is varied between $[64,64,32]$ (small), $[128,128,96,64]$ (baseline), and $[256,256,128,96]$ (large), each trained with three seeds at $\re=500$. The basis truncation is varied over $(N_x,N_t)\in\{(6,1),(6,3),(6,5),(8,5),(8,9)\}$, corresponding to 6, 18, 30, 40, and 72 nominal modes.
+
+\subsection{Actuation-energy sweep}
+The target energy is varied over $E^*\in\{0.01,0.05,0.10,0.25,0.50,1.00,2.00\}$ at $\re=500$.
+
+\subsection{Aspect-ratio sensitivity}
+The identification is repeated in a $2{:}1$ rectangular cavity ($L_x/L_y=2$) at $\re=500$, $E^*=0.25$, with the aspect ratio entering through the physical mode normalization of Eq.~\eqref{eq:lid}.
+
+\subsection{Fourier versus modified-Chebyshev parametrization}
+The spatial basis of Eq.~\eqref{eq:lid} is replaced by modified Chebyshev polynomials with identical mode count and loss. The two parameterizations are compared at the three Reynolds numbers.
+
+\section{Independent lattice-Boltzmann methodology}\label{sec:lbm}
+
+\subsection{MRT-D2Q9 solver}
+The independent verification uses a lattice-Boltzmann solver with a D2Q9 lattice and a multiple-relaxation-time (MRT) collision operator \cite{succi2001lattice}. Half-way bounce-back boundary conditions enforce the no-slip walls, and the lid is imposed as a Dirichlet condition following the forced lid profile.
+
+\subsection{Lid forcing}
+Four lid profiles are used for the steady-state comparisons: the uniform lid $U=1$, the first harmonic $\sin(\pi x)$, the second harmonic $A_2\sin(2\pi x)$ with the PINN-identified amplitude, and the time-mean of the complete PINN-identified control (denoted ``PINN (mean)''). In the unsteady comparisons, the complete periodic control law $U_{\mathrm{lid}}(x,t)$ reconstructed from the identified Fourier coefficients (``PINN Fourier, t-dependent'') and its modified-Chebyshev counterpart (``Chebyshev, t-dependent'') are imposed as time-dependent Dirichlet conditions.
+
+\subsection{Steady and unsteady simulations}
+The steady-state comparisons are performed on a $256\times256$ grid at $\re=100$, $500$, and $1000$, integrated until the residual falls below $10^{-9}$. The unsteady branch tests are integrated over several forcing periods, the transient is discarded, and the fluctuating kinetic energy $K_{\mathrm{fluct}}$ is computed from the time series of the velocity field relative to its mean $K$. The ratio $K_{\mathrm{fluct}}/K$ is the primary metric of the admissibility test adopted in this study: a branch whose realized flow has $K_{\mathrm{fluct}}/K$ below $1\%$ is regarded as quasi-stationary and therefore admissible; a branch whose realized flow is dominated by fluctuations fails the test.
+
+\subsection{Ghia benchmark}
+The solver is validated against the classical reference data of Ghia \emph{et al.}~\cite{ghia1982high} for the standard uniform-lid cavity at $\re=100$ and $\re=1000$, using the $L^2$ and $L^{\infty}$ errors of both velocity components on the centerlines. This comparison validates the fluid solver for the canonical uncontrolled cavity; the admissibility of the controlled branches is assessed separately through the $K_{\mathrm{fluct}}/K$ test.
+
+\subsection{Grid convergence and GCI}
+A grid-convergence-index study is performed at $\re=500$ under the $A_2\sin(2\pi x)$ control using grids of $N=128$, $256$, and $512$ points, with the integrated dissipation as the quantity of interest. The observed order $p$ and the grid-convergence index GCI are computed from the three solutions following the standard three-grid procedure.
+
+\subsection{PINN-to-LBM transfer}
+The controls are transferred to the LBM from the identified coefficient sets without any retraining or physics-informed constraint in the LBM. The comparison therefore reflects the hydrodynamic response of an independent discretization to the same boundary forcing.
+
+\section{Results}\label{sec:results}
+
+\subsection{Baseline Fourier branch}\label{sec:baseline}
+
+\begin{figure}[t]
+\includegraphics[width=0.49\linewidth]{figures/fig1_modal_fractions.png}\hfill
+\includegraphics[width=0.49\linewidth]{figures/fig2_temporal_fractions.png}
+\caption{\label{fig:modal} Second-mode energy fraction $f_2$ (left) and temporal energy fraction $f_t$ (right) of the identified actuation as functions of the Reynolds number, for the Fourier basis (circles) and the modified-Chebyshev basis (squares). The Fourier branch concentrates more than $91\%$ of the control energy in the second spatial mode at $\re=100$ and $500$; at $\re=1000$ the second mode remains the largest contribution but its share drops to $64\%$ while the temporal content grows to $32\%$, delimitating the range over which the modal concentration is strong. The Chebyshev branch is temporally dominated at every Reynolds number.}
+\end{figure}
+
+Table~\ref{tab:baseline} summarizes the Fourier branch at the three Reynolds numbers. At $\re=100$ and $500$, the identified actuation is effectively a stationary second harmonic: $f_2$ equals $91.6\%$ and $92.2\%$, while the temporal fraction is below $1.3\%$. The realized control energy remains close to the target $E^*=0.25$ in both cases. At $\re=1000$ the second mode remains the largest individual contribution ($f_2=64.0\%$), but the temporal fraction rises to $32.2\%$ and the leading coefficient $A_2$ decreases from approximately $0.68$ to $0.586$. The moderate decline of $A_2$ and the concurrent growth of time-dependent content delimit the regime in which the modal concentration is strong: the second-mode-dominated branch is a robust feature at $\re\le 500$ and becomes mixed at $\re=1000$. Figure~\ref{fig:modal} displays the same data together with the Chebyshev comparison of Section~\ref{sec:param}.
+
+\begin{table}[t]
+\caption{Baseline Fourier branch. $E$: realized control energy; $A_2$: coefficient of the second spatial harmonic; $f_2$: second-mode energy fraction; $f_t$: temporal energy fraction.}
+\label{tab:baseline}
+\begin{tabular}{ccccc}
+\hline\hline
+$\re$ & $E$ & $A_2$ & $f_2$ (\%) & $f_t$ (\%) \\
+\hline
+100  & 0.2581 & 0.6876 & 91.6 & 0.7 \\
+500  & 0.2534 & 0.6835 & 92.2 & 1.3 \\
+1000 & 0.2687 & 0.5863 & 64.0 & 32.2 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+\subsection{Reynolds-number dependence}\label{sec:redep}
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig4_reynolds_robustness.png}
+\caption{\label{fig:reyn} Reynolds dependence of the flow response to the PINN-identified control, realized in the independent LBM solver. Left: second-mode amplitude $A_2$ of the mean vertical-centerline velocity $u(0.5,y)$ under the PINN (mean) lid profile, as a function of $\re$ (open circles) together with its average (dotted line). Right: total enstrophy $Z=\iint\omega^2\,\mathrm{d}\Omega$ for the four lid profiles at each Reynolds number. The controlled branch retains its low-dissipation character across the range, with the degree of modal concentration declining gently from $\re=500$ to $\re=1000$.}
+\end{figure}
+
+Across $\re\in\{100,500,1000\}$, the second-mode amplitude of the mean flow realized under the PINN control remains of the same order, and the enstrophy of the controlled branch is markedly below that of the uniform lid at every Reynolds number (Fig.~\ref{fig:reyn}). We emphasize two qualifications. First, the flow response and the control content evolve together: the decline of the control coefficient at $\re=1000$ (Table~\ref{tab:baseline}) is accompanied by a rise of the temporal content, so the modal concentration is not Reynolds-independent in the strict sense. Second, the range examined stops at $\re=1000$; the persistence of the branch beyond this value is not addressed here.
+
+\subsection{Actuation-energy dependence}\label{sec:energy}
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig5_energy_sweep.png}
+\caption{\label{fig:energysweep} Actuation-energy sweep at $\re=500$, Fourier basis. Left: second-mode energy fraction $f_2$ as a function of the energy target $E^*$. Right: second-mode coefficient $A_2$ as a function of $E^*$. Up to $E^*=0.25$ the modal concentration is maximal; beyond the target $0.5$ the second-mode share degrades and the temporal content grows (see Table~\ref{tab:energy}).}
+\end{figure}
+
+Table~\ref{tab:energy} and Fig.~\ref{fig:energysweep} report the effect of the activation-energy target $E^*$ on the recovered branch at $\re=500$. For targets up to $E^*=0.25$, the realized energy tracks the target and the modal concentration is strongest ($f_2\simeq 92$--$93\%$). As the target is raised to $0.5$--$2.0$, the realized energy continues to grow but the second-mode share declines to $74\%$ at $E^*=2.0$, while the temporal fraction rises to $21.8\%$. The second spatial mode remains the largest contribution in every case, but the collapse becomes progressively less sharp as the actuation budget increases. This behavior is consistent with a soft energy penalty $\mathcal{L}_{\mathrm{ctrl}}\propto(E-E^*)^2$, which guides the solution toward the target without enforcing it exactly; at high energy levels the optimizer finds it increasingly favorable to distribute energy across modes and into temporal content.
+
+\begin{table}[t]
+\caption{Actuation-energy sweep at $\re=500$, Fourier basis. $E^*$: target; $E_r$: realized energy; $f_2$: second-mode fraction; $f_t$: temporal fraction. For small targets the realized energy exceeds the target (floor effect), and the realized values are reported.}
+\label{tab:energy}
+\begin{tabular}{cccc}
+\hline\hline
+$E^*$ & $E_r$ & $f_2$ (\%) & $f_t$ (\%) \\
+\hline
+0.01  & 0.0540 & 92.8 & 0.4 \\
+0.05  & 0.0790 & 92.2 & 0.5 \\
+0.10  & 0.1183 & 92.1 & 0.7 \\
+0.25  & 0.2534 & 92.5 & 1.2 \\
+0.50  & 0.5006 & 85.4 & 6.6 \\
+1.00  & 0.9756 & 86.3 & 9.2 \\
+2.00  & 1.9333 & 74.0 & 21.8 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+\subsection{Initialization robustness}\label{sec:seeds}
+
+\begin{table}[t]
+\caption{Seed study at $\re=500$, Fourier basis. Each row is one independent initialization. $E_r$: realized energy; $f_2$: second-mode fraction; $f_t$: temporal fraction. The realized energy is reproducible (0.240--0.268), whereas the modal branch varies: four seeds reach a second-mode-dominated branch, four a temporal branch, and two are intermediate.}
+\label{tab:seeds}
+\begin{tabular}{cccc}
+\hline\hline
+Seed & $E_r$ & $f_2$ (\%) & $f_t$ (\%) \\
+\hline
+0 & 0.240 & 53.2 & 43.8 \\
+1 & 0.267 & 91.1 & 1.3 \\
+2 & 0.257 & 89.2 & 5.0 \\
+3 & 0.268 & 2.1 & 97.8 \\
+4 & 0.250 & 52.2 & 45.0 \\
+5 & 0.245 & 0.4 & 99.5 \\
+6 & 0.265 & 86.3 & 1.0 \\
+7 & 0.250 & 91.3 & 1.6 \\
+8 & 0.250 & 1.3 & 98.4 \\
+9 & 0.267 & 0.1 & 99.6 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+The retraining of the network from ten independent initializations at $\re=500$ reveals an important distinction between the robustness of the objective and the uniqueness of the branch. As Table~\ref{tab:seeds} shows, the realized control energy is reproducible, lying in the narrow range $0.240$--$0.268$ for all seeds. The modal structure, by contrast, is sensitive to initialization: four seeds converge to a nearly pure second-mode branch ($f_2\simeq 86$--$91\%$), four to a nearly pure temporal branch ($f_t\simeq 98$--$100\%$), and two are intermediate. The objective value is comparable across these branches, which demonstrates that the training landscape contains \emph{multiple admissible branches} of comparable loss and that the particular branch recovered depends on the initialization. The energy being reproducible while the modal branch varies indicates that the variance term selects a branch through its weighting rather than through the physics of the objective alone.
+
+\subsection{Loss ablation}\label{sec:ablation}
+
+\begin{table}[t]
+\caption{Loss ablation at $\re=500$, Fourier basis. Configuration names indicate the term removed or reweighted. $E_r$: realized energy; $f_2$: second-mode fraction; $f_t$: temporal fraction.}
+\label{tab:ablation}
+\begin{tabular}{lccc}
+\hline\hline
+Configuration & $E_r$ & $f_2$ (\%) & $f_t$ (\%) \\
+\hline
+Baseline          & 0.2534 & 92.2 & 1.3 \\
+No $\mathcal{L}_{\mathrm{var}}$        & 0.2582 & 0.2 & 5.1 \\
+No $\mathcal{L}_{\re}$           & 0.2534 & 92.2 & 1.3 \\
+No $\mathcal{L}_{\mathrm{diss}}$      & 0.2533 & 92.3 & 1.2 \\
+No $\mathcal{L}_{\mathrm{var}},\mathcal{L}_{\re}$ & 0.2582 & 0.2 & 5.1 \\
+No $\mathcal{L}_{\mathrm{var}},\mathcal{L}_{\mathrm{diss}}$ & 0.2578 & 0.3 & 5.0 \\
+$\lambda_{\mathrm{var}}/2$        & 0.2546 & 89.3 & 1.5 \\
+$2\lambda_{\mathrm{var}}$         & 0.2598 & 92.8 & 1.0 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:ablation} reports the loss-ablation study. Removing $\mathcal{L}_{\mathrm{var}}$ redirects the optimizer to a temporal branch ($f_2\simeq0.2\%$, $f_t\simeq5\%$); halving or doubling $\lambda_{\mathrm{var}}$ preserves the second-mode branch with only a few percentage points of change. Removing $\mathcal{L}_{\re}$ or $\mathcal{L}_{\mathrm{diss}}$ leaves the branch essentially unchanged, and the same holds for the perturbation of $\lambda_{\mathrm{diss}}$ and $\lambda_{\mathrm{ctrl}}$ (not shown in the table for brevity). The variance term is therefore the dominant \emph{branch-selection} mechanism in the tested loss formulation, whereas the dissipation and Reynolds-regularization terms play a secondary role. We interpret this as direct evidence that the second-mode-dominated branch is selected by an inductive bias rather than imposed by the objective alone.
+
+\subsection{Architecture and mode-count robustness}\label{sec:archmode}
+
+Table~\ref{tab:archmode} reports the architecture and basis-size sweep at $\re=500$. Across the three network capacities, the second-mode branch is recovered with $f_2$ between $87\%$ and $94\%$ (excluding a single baseline outlier that coincides with the intermediate branch of Table~\ref{tab:seeds}). Across the basis truncations from 6 to 72 nominal modes, $f_2$ lies between $87.3\%$ and $92.3\%$ and the dominant spatial mode remains $(1,0)$ in every case. The realized control energy stays close to the target in all configurations (between $0.239$ and $0.278$). These results show that the second-mode branch can be recovered under several tested network capacities and basis sizes; they do not establish architecture independence in a strict sense, since the tested set is finite and the baseline outlier demonstrates that branch selection retains a stochastic component.
+
+\begin{table}[t]
+\caption{Architecture and mode-count robustness at $\re=500$, Fourier basis. Left: network head and range of $f_2$ over three seeds. Right: basis truncation $(N_x,N_t)$ (with number of nominal modes) and $f_2$. The realized energy stays close to the target in all configurations (between $0.239$ and $0.278$).}
+\label{tab:archmode}
+\begin{tabular}{ll|cc}
+\hline\hline
+\multicolumn{2}{c|}{Architecture} & \multicolumn{2}{c}{Basis} \\
+Head & $f_2$ range (\%) & $(N_x,N_t)$ & $f_2$ (\%) \\
+\hline
+$[64,64,32]$         & 90.3--93.6 & (6,1) & 89.2--91.2\\
+$[128,128,96,64]$    & 89.2--91.1$^{*}$ & (6,3) & 89.3 \\
+$[256,256,128,96]$   & 86.7--92.2 & (6,5) & 92.3 \\
+     &    & (8,5) & 87.8 \\
+     &    & (8,9) & 87.3 \\
+\hline\hline
+\end{tabular}
+\vspace{1mm}
+\begin{flushleft}\footnotesize{$^{*}$ excluding the seed associated with the intermediate branch of Table~\ref{tab:seeds}.}\end{flushleft}
+\end{table}
+
+\subsection{Geometric robustness}\label{sec:ar}
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig6_aspect_ratio.png}
+\caption{\label{fig:ar} Aspect-ratio robustness at $\re=500$, seed 42, $E^*=0.25$. Left: control coefficients $A_1$, $A_2$, $A_3$ for the square (1:1) and rectangular (2:1) cavities. Right: second-mode fraction $f_{(2,0)}$ and temporal fraction $f_t$ for the two geometries. The second-mode branch persists in the $2{:}1$ cavity, with $f_2$ varying from $92.2\%$ to $91.2\%$ and the realized energy changing by less than $1\%$.}
+\end{figure}
+
+Table~\ref{tab:ar} and Fig.~\ref{fig:ar} compare the identified branch in the square and in the $2{:}1$ rectangular cavity at $\re=500$. The second-mode fraction changes from $92.2\%$ to $91.2\%$, the temporal fraction from $1.3\%$ to $1.6\%$, and the realized energy from $0.2534$ to $0.2514$; the coefficient $A_2$ varies from $0.6835$ to $0.6770$. The identified Fourier branch is therefore robust to the investigated moderate aspect-ratio change. We do not claim geometry independence: only the two shapes considered are tested, and the branch remains conditioned on the Fourier parametrization used in both cases.
+
+\begin{table}[t]
+\caption{Aspect-ratio dependence at $\re=500$, $E^*=0.25$. AR: cavity aspect ratio; $A_2$: second-mode coefficient; $f_2$: second-mode fraction; $f_t$: temporal fraction; $E$: realized energy.}
+\label{tab:ar}
+\begin{tabular}{ccccc}
+\hline\hline
+AR & $A_2$ & $f_2$ (\%) & $f_t$ (\%) & $E$ \\
+\hline
+1 (square) & 0.6835 & 92.2 & 1.3 & 0.2534 \\
+2 (rectangular) & 0.6770 & 91.2 & 1.6 & 0.2514 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+The identified lid profiles for the two cavities are compared in Fig.~\ref{fig:lidprofiles}, together with the pure reference $\sin(2\pi x)$ and the reduced three-mode summary. The full and reduced reconstructions coincide almost everywhere, confirming that the low-dimensional representation is a faithful summary of the identified control also in the rectangular geometry.
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig7_lid_profiles.png}
+\caption{\label{fig:lidprofiles} Identified lid controls $U_{\mathrm{lid}}(s)$ with $s=x/L_x$ for the square (left) and $2{:}1$ (right) cavities at $\re=500$: reference $A_2\sin(2\pi s)$ (dashed, open symbols), complete PINN control (solid), and reduced three-mode reconstruction (dotted). The coincidence of the three curves shows that the identified control is quantitatively close to its dominant-mode truncation.}
+\end{figure}
+
+\subsection{Control-parametrization dependence}\label{sec:param}
+
+\begin{table}[t]
+\caption{Fourier versus modified-Chebyshev parameterization. $E$: realized energy; $A_2$: cosine projection onto the second spatial mode; $f_2$: second-mode fraction; $f_t$: temporal fraction; RMSE: reconstruction error of the basis on the identified field.}
+\label{tab:param}
+\begin{tabular}{ccccccl}
+\hline\hline
+Basis & $\re$ & $E$ & $f_2$ (\%) & $f_t$ (\%) & RMSE \\
+\hline
+\multirow{3}{*}{Fourier}
+ & 100  & 0.2581 & 91.6 & 0.7 & $1.5\times10^{-16}$ \\
+ & 500  & 0.2534 & 92.2 & 1.3 & $1.6\times10^{-16}$ \\
+ & 1000 & 0.2687 & 64.0 & 32.2 & $1.5\times10^{-16}$ \\
+\cline{1-7}
+\multirow{3}{*}{Chebyshev}
+ & 100  & 0.2890 & 0.3 & 99.3 & $5.4\times10^{-3}$ \\
+ & 500  & 0.2850 & 6.2 & 93.3 & $3.8\times10^{-3}$ \\
+ & 1000 & 0.2908 & 0.5 & 98.8 & $8.3\times10^{-3}$ \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+The dependence of the identified branch on the control parametrization is examined by replacing the Fourier modes of Eq.~\eqref{eq:lid} with modified Chebyshev polynomials while keeping the mode count, the loss, and all hyperparameters fixed. Table~\ref{tab:param} and Fig.~\ref{fig:modal} compare the two parameterizations at the three Reynolds numbers. The Fourier basis yields a second-mode-dominated, nearly stationary control at $\re\le500$ and a mixed spatial--temporal control at $\re=1000$. The modified-Chebyshev basis, in contrast, produces a temporally dominated branch at every Reynolds number, with $f_t$ between $93\%$ and $99\%$ and a negligible second-mode share. The Chebyshev parameterization is also less faithful as a reconstruction, with a root-mean-square error of order $10^{-3}$ compared with machine precision for the Fourier basis, reflecting a known limitation of polynomial bases for the oscillatory control fields studied here.
+
+The qualitative change in branch selection between bases demonstrates that the identified modal content is \emph{conditional on the control parametrization}. The second spatial mode is not a representation-free property of the underlying optimization problem as posed here; it is a reproducible outcome of the Fourier parameterization combined with the variance bias, whereas the same loss and Reynolds conditions under a different basis settle on a different, temporally dominated branch.
+
+\subsection{LBM solver verification}\label{sec:ghia}
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig8_lbm_ghia.png}
+\caption{\label{fig:ghia} Validation of the independent LBM-MRT solver against the reference data of Ghia \emph{et al.}~\cite{ghia1982high} for the standard uniform-lid cavity at $\re=100$ and $\re=1000$. The mean horizontal velocity $u(0.5,y)$ is shown with the reference points; the reported $L_2$ error is computed on the vertical centerline.}
+\end{figure}
+
+As a prerequisite for the branch verification, the LBM solver is validated against the Ghia benchmark for the canonical unforced cavity, as described in Section~\ref{sec:lbm}. Table~\ref{tab:ghia} reports the $L^2$ and $L^{\infty}$ errors of both velocity components at $\re=100$ and $1000$, and Fig.~\ref{fig:ghia} shows the centerline comparison at $\re=100$ and $\re=1000$. The errors are at the few-percent level, which we regard as adequate for the purpose of verifying the fluid solver. This comparison validates the solver for the unforced cavity; the admissibility of the controlled branches is assessed separately through the fluctuating-kinetic metric of Section~\ref{sec:lbm}.
+
+\begin{table}[t]
+\caption{Validation of the LBM-MRT solver against the Ghia benchmark data for the unforced cavity ($256\times256$ grid). $L^2_u$, $L^{\infty}_u$, $L^2_v$, $L^{\infty}_v$: errors of the centerline velocity components.}
+\label{tab:ghia}
+\begin{tabular}{ccccc}
+\hline\hline
+$\re$ & $L^2_u$ & $L^{\infty}_u$ & $L^2_v$ & $L^{\infty}_v$ \\
+\hline
+100  & 0.00506 & 0.01283 & 0.00675 & 0.01136 \\
+1000 & 0.01411 & 0.03003 & 0.01321 & 0.02125 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+\subsection{Grid convergence and GCI}\label{sec:gci}
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig9_gci.png}
+\caption{\label{fig:gci} Grid-convergence study at $\re=500$ under the $A_2\sin(2\pi x)$ control. Left: integrated dissipation $\varepsilon$ on grids of $N=128$, $256$, and $512$ points, with the extrapolated value $\varepsilon^*$ (dashed). Right: deviation from $\varepsilon^*$ versus grid spacing, with the fitted slope $p=1.08$. The grid-convergence index at $N=512$ is approximately $5\%$.}
+\end{figure}
+
+The grid-convergence study of Section~\ref{sec:lbm} gives $\varepsilon=0.00935$, $0.01041$, and $0.01091$ on grids of $128$, $256$, and $512$ points, respectively, an observed order $p=1.08$, an extrapolated value $\varepsilon^*=0.0114$, and a grid-convergence index of approximately $5\%$ at $N=512$ (Fig.~\ref{fig:gci}). The integrated dissipation at the three resolutions differs by a few percent, so the dissipation values used in the profile comparisons of Section~\ref{sec:dissipation} are converged to a level consistent with the reported differences between the tested controls.
+
+\subsection{Independent verification of the Fourier branch}\label{sec:dissipation}
+
+\begin{figure}[!t]
+\includegraphics[width=\linewidth]{figures/fig10_dissipation.png}
+\caption{\label{fig:dissipation} Integrated dissipation $\varepsilon$ of the realized flows under the four lid profiles at $\re=100$, $500$, and $1000$, from the independent LBM solver. Percentages indicate the relative change with respect to the uniform lid. The complete PINN control and its dominant-mode truncation $A_2\sin(2\pi x)$ achieve the lowest dissipation among the tested controls at every Reynolds number.}
+\end{figure}
+
+Table~\ref{tab:dissipation} and Fig.~\ref{fig:dissipation} report the integrated dissipation of the flows realized by the independent LBM solver under the four lid profiles. The PINN-identified control yields a dissipation reduction of $77\%$, $73\%$, and $80\%$ relative to the uniform lid at $\re=100$, $500$, and $1000$. The dominant-mode truncation $A_2\sin(2\pi x)$ alone is close to the complete control and in fact attains the lowest dissipation among the tested profiles at every Reynolds number, the complete control being within roughly $10$--$15\%$ of it. The pure first harmonic $\sin(\pi x)$ is intermediate. These results confirm independently that the identified Fourier branch is associated with a markedly reduced dissipation and that its dominant-mode truncation captures most of the improvement. We do not claim that the branch is the global dissipative optimum of the problem; rather, it yields the lowest dissipation among the tested control profiles according to an independent solver.
+
+\begin{table}[t]
+\caption{Integrated dissipation $\varepsilon$ of the realized flows from the independent LBM solver ($256\times256$ grid) for the uniform, $\sin(\pi x)$, $A_2\sin(2\pi x)$, and PINN (mean) lid profiles. $\Delta$ is the change relative to the uniform lid.}
+\label{tab:dissipation}
+\begin{tabular}{ccccc}
+\hline\hline
+$\re$ & Uniform & $\sin(\pi x)$ & $A_2\sin(2\pi x)$ & PINN (mean) \\
+\hline
+100  & 0.16195 & 0.04758 & 0.03445 & 0.03776 \\
+500  & 0.04425 & 0.01561 & 0.01041 & 0.01189 \\
+1000 & 0.02654 & 0.01011 & 0.00473 & 0.00524 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+The fluctuating kinetic content of the realized flows provides the physical admissibility test of Section~\ref{sec:lbm}. Under the complete time-dependent Fourier control, the ratio $K_{\mathrm{fluct}}/K$ is $0.15\%$, $0.04\%$, and $0.65\%$ at $\re=100$, $500$, and $1000$ (Table~\ref{tab:admis}). These values are an order of magnitude below the adopted $1\%$ threshold, so the Fourier branch is regarded as quasi-stationary and physically reproducible. Centerline velocity profiles of the realized flows, and the modal content of their mean fields, are provided in the supplementary material.
+
+\subsection{LBM assessment of the modified-Chebyshev branch}\label{sec:cheb_lbm}
+
+Under the time-dependent modified-Chebyshev control, the same LBM realization is dominated by fluctuations: $K_{\mathrm{fluct}}/K$ reaches $847\%$ at $\re=100$, $44\%$ at $\re=500$, and $125\%$ at $\re=1000$ (Table~\ref{tab:admis}). The realized mean flow is additionally weak, with a low second-mode amplitude. According to the admissibility test adopted in this study, the modified-Chebyshev branch therefore \emph{fails} the independent LBM verification, and we refrain from interpreting it as a physically reproducible control for the present cavity setup. We stress that this is a failure under the adopted LBM test, not a statement of mathematical or physical impossibility: the Chebyshev branch is an admissible critical point of the loss, and its rejection here rests on the hydrodynamic response to the periodic forcing.
+
+\begin{table}[t]
+\caption{Temporal branch response from the independent LBM solver. $K_{\mathrm{fluct}}/K$: ratio of fluctuating to total kinetic energy of the realized flow; $(i,j)$: dominant mode of the mean field (first entry) and of the fluctuations (second entry). The Fourier (PINN) control passes the adopted $1\%$ admissibility threshold at every Reynolds number; the modified-Chebyshev control fails it.}
+\label{tab:admis}
+\begin{tabular}{clccc}
+\hline\hline
+$\re$ & Control & $K_{\mathrm{fluct}}/K$ & dom. (mean/fluct.) & Pass \\
+\hline
+\multirow{2}{*}{100}
+ & PINN (Fourier, t-dep.) & 0.15\% & (1.0 / 1.0) & yes \\
+ & Chebyshev (t-dep.) & 847\% & (4.0 / 7.0) & no \\
+\cline{2-5}
+\multirow{2}{*}{500}
+ & PINN (Fourier, t-dep.) & 0.04\% & (2.0 / 1.0) & yes \\
+ & Chebyshev (t-dep.) & 44\% & (3.0 / 1.0) & no \\
+\cline{2-5}
+\multirow{2}{*}{1000}
+ & PINN (Fourier, t-dep.) & 0.65\% & (2.0 / 1.0) & yes \\
+ & Chebyshev (t-dep.) & 125\% & (3.0 / 1.0) & no \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+\subsection{Consolidated results}\label{sec:consolidated}
+
+\begin{figure*}[!t]
+\includegraphics[width=\linewidth]{figures/fig12_consolidated.png}
+\caption{\label{fig:consolidated} Consolidated comparison between the PINN identification and the independent LBM realization. (a) Integrated dissipation of the realized flows under the $A_2\sin(2\pi x)$ control, the complete PINN control, and the uniform reference, versus $\re$. (b) Second-mode amplitude $A_2$: the PINN control coefficient (dashed) and the value measured on the LBM mean flow (solid), together with the square and $2{:}1$ aspect-ratio values. (c) Fluctuating-to-total kinetic ratio for the Fourier and Chebyshev time-dependent branches, with the adopted $1\%$ admissibility threshold (dotted). (d) Dominant mode index of the mean field and of the fluctuations for the two branches. The Fourier branch passes the admissibility test; the Chebyshev branch fails it.}
+\end{figure*}
+
+Figure~\ref{fig:consolidated} summarizes the study. The dissipation of the Fourier-controlled branch lies well below the uniform reference across the Reynolds range (panel a); the second-mode coefficient of the control and the value measured on the realized flow are of the same order (panel b); and the fluctuating content of the Fourier branch remains below $1\%$, whereas that of the Chebyshev branch is at least one order of magnitude larger at $\re=500$ and $1000$ and more than two orders at $\re=100$ (panel c). Panel (d) shows the corresponding dominant modes of the mean fields and fluctuations. Together with the robustness and ablation campaigns described above, this establishes the core message of the paper: the identification produces a second-mode-dominated Fourier branch that is reproducible, low-dissipation, and quasi-stationary under independent verification within the tested range, while remaining conditional on the basis, the target energy, and the regularization choice.
+
+\section{Symbolic regression: a compact analytical representation}\label{sec:sr}
+
+\subsection{Method and role}
+
+To provide an interpretable summary of the identified control law, the sampled field $U_{\mathrm{lid}}(x,t,\re)$ predicted by the PINN is submitted to symbolic regression (PySR \cite{cranmer2023pysr}) over a dictionary of elementary operators. We emphasize the role of this step: symbolic regression \emph{summarizes} the identified Fourier branch in a compact form; it does not constitute an independent optimization or physical-validation procedure, and its output is not used as evidence of optimality. This is a deliberate change of emphasis relative to some earlier presentations of symbolic regression in related work \cite{brunton2016discovering,champion2019data}.
+
+\subsection{Recovered expression and LOCO generalization}
+
+Applied to the sampled control field, symbolic regression converges to compact expressions dominated by a single trigonometric function of the spatial coordinate, of the generic form
+\begin{equation}
+U_{\mathrm{SR}} \simeq a\,\bigl[b+\cos(\omega x-\varphi)\bigr]^{2}\,(c_0 + c_1 x + c_2 t + c_3 \re) + c_4,
+\end{equation}
+with a fitted angular frequency $\omega\simeq 3.42$ and a slowly varying linear envelope. The oscillatory kernel together with the nearly Reynolds-independent envelope reproduces the quasi-stationary, second-mode-dominated content of the identified Fourier branch, but the retained coefficients vary between fits, so the symbolic laws are best regarded as compact interpretive summaries rather than canonical expressions. The generalization of the symbolic representation is assessed by a leave-one-condition-out (LOCO) procedure, in which the regression is trained on all Reynolds conditions except one and evaluated on the excluded one. The resulting coefficients of determination are reported in Table~\ref{tab:loco}. The high values indicate that the compact symbolic representation generalizes well across the Reynolds range used for the identification, consistent with the modal analysis of Section~\ref{sec:param}: the second spatial harmonic dominates the identified control, and the symbolic expressions combine it with a weak envelope rather than isolating a single factorized mode.
+
+\begin{table}[t]
+\caption{Leave-one-condition-out evaluation of the symbolic representation. $R^2$: coefficient of determination of the expression trained on all conditions except the indicated one, evaluated on the excluded condition.}
+\label{tab:loco}
+\begin{tabular}{cccccccccc}
+\hline\hline
+$\re_{\mathrm{held-out}}$ & 100 & 300 & 400 & 500 & 600 & 700 & 800 & 900 & 1000 \\
+$R^2$ & 0.9885 & 0.9666 & 0.9685 & 0.9908 & 0.9748 & 0.9595 & 0.9500 & 0.9326 & 0.9820 \\
+\hline\hline
+\end{tabular}
+\end{table}
+
+\subsection{Scope and limitations}
+
+LOCO measures the ability of the symbolic representation to reproduce the identified control law at held-out Reynolds numbers. It does not demonstrate that the underlying physical problem has a unique low-dimensional optimum, which would contradict the branch multiplicity documented in Section~\ref{sec:seeds}. The symbolic expressions are interpretable summaries of the Fourier branch only; applied to a different parametrization, the same procedure would expose a different structure.
+
+\section{Discussion}\label{sec:discussion}
+
+\subsection{Contribution relative to prior work}
+
+The main contribution of this work relative to earlier AI-based control studies is not the discovery of the second spatial mode as a mode of the cavity, which is expected from the spectral content of confined flows, but rather (i) the identification of this mode as the dominant \emph{component of an identified control law} in a Fourier-parameterized optimization, (ii) the systematic characterization of its robustness and limits over energy, seeds, architecture, geometry, and parametrization, and (iii) its independent verification by a second numerical method. The work also clarifies a methodological distinction with classical reduced-order modeling: POD and related decompositions are \emph{a posteriori} reductions of resolved flow fields, whereas the present approach characterizes the dimensionality of the control space directly within the optimization. The phrase ``modal collapse'' used here refers to the concentration of control energy in one harmonic and carries no claim of optimality or uniqueness.
+
+\subsection{Conditional modal collapse}
+
+The central concept that organizes the present results is that the dominance of the second spatial mode is \emph{conditional}. It is conditional on the Fourier parametrization, since the modified-Chebyshev basis produces a temporally dominated branch under identical loss and Reynolds conditions; it is conditional on the variance bias, whose removal switches the branch; and it is conditional on the initialization, since a subset of the seed runs reach an equally admissible temporal branch. The collapse is therefore best described as a \emph{parameterization-conditioned modal collapse of the identified branch}, reproducible within its conditioning assumptions and not transferable beyond them.
+
+\subsection{Reynolds-number and actuation limits}
+
+The second-mode-dominated branch is strong at $\re\le500$ ($f_2\simeq92\%$) and degrades at $\re=1000$ ($f_2=64\%$, $f_t=32\%$). We therefore do not describe the collapse as Reynolds-independent: $\re=1000$ delimits a clear weakening of the strong dominance within the tested range. Similarly, the collapse is strongest at moderate actuation energy ($E^*\lesssim0.25$) and weakens as the energy budget is raised, with the temporal content growing monotonically with the target.
+
+\subsection{Branch multiplicity}
+
+The seed study and the parametrization study jointly demonstrate that the loss landscape of this identification problem contains multiple admissible branches: the spatial (second-mode) branch, the temporal branch, and intermediate states are each reachable with comparable objective values. The realized control energy is the robust quantity across seeds, while the modal composition is the sensitive one. This separation has a practical consequence: reporting only the objective value of a PINN identification can hide substantial structural non-uniqueness.
+
+\subsection{Parametrization dependence}
+
+The Fourier/Chebyshev comparison shows that the modal structure of an identified control is partly a property of the representation. This cautions against attributing physical significance to a modal decomposition that is, at least in part, a consequence of the chosen basis. The larger reconstruction error of the Chebyshev parametrization (Table~\ref{tab:param}) also prevents a fully controlled comparison: the two bases differ both in their branch selection and in their representational fidelity.
+
+\subsection{Physical interpretation of the second spatial mode}
+
+The prevalence of the second harmonic can be rationalized physically without invoking an optimum. A unidirectional lid forces a single primary vortex whose shear layers interact with the stationary walls, whereas an antisymmetric $\sin(2\pi x)$ lid generates two counter-rotating vortex structures near the lid that inject momentum toward the cavity core, reducing the wall-normal velocity gradients. The independent LBM results are consistent with this interpretation: the $A_2\sin(2\pi x)$ actuation produces the lowest dissipation among the tested profiles and preserves the baseline vortex structure. We present this as a plausible mechanism consistent with the data, not as a proven variational principle.
+
+\subsection{Role of the LBM verification}
+
+The LBM verification changes the status of the Fourier branch: it is reproduced by an independent discretization as a quasi-stationary flow with $K_{\mathrm{fluct}}/K<1\%$ and low dissipation, rather than remaining a PINN-only numerical construction. It equally reframes the Chebyshev branch as an identification outcome that fails our adopted admissibility test. The verification is numerical, not experimental; it establishes reproducibility across methods, not proven physical realizability.
+
+\subsection{Optimality and uniqueness}
+
+The evidence collected here does not establish global optimality or uniqueness of any branch. The dissipation results show that the Fourier branch (and its dominant-mode truncation) yields the lowest dissipation among the tested controls; the admissibility results show that it is quasi-stationary and reproducible; but the seed and parametrization studies show that the objective landscape admits other branches of comparable value. Any stronger statement would require an exhaustive search over parameterizations, architectures, and initializations that is beyond the scope of this work.
+
+\subsection{Limitations and future directions}
+
+The present study is restricted to $\re\le1000$, to the square and $2{:}1$ cavities, to the Fourier and modified-Chebyshev bases, and to a single objective weighting. The persistence of the branch at higher Reynolds numbers, in three dimensions, or under alternative objectives (drag reduction, mixing, vorticity suppression) is not addressed. The admissibility test is a scalar threshold on the fluctuating kinetic ratio, chosen for practicality rather than universality. Finally, the LBM verification is numerical; experimental validation of the identified control remains an open direction. Future work should examine whether similar conditional low-dimensional structures emerge in more complex configurations and whether branch-selection biases can be made explicit and controllable.
+
+\section{Conclusions}\label{sec:conclusions}
+
+We have used a parametric physics-informed neural network to identify a distributed lid actuation for the lid-driven cavity over $100\le\re\le1000$, and we have characterized the structure of the identified control through systematic robustness, parametrization, and independent-verification campaigns. Within the Fourier parameterization, the identification converges reproducibly to a branch dominated by a single second spatial mode, which concentrates more than $91\%$ of the control energy at $\re=100$ and $500$. This branch: (i) is robust to moderate changes of the actuation-energy target, the cavity aspect ratio, and the network architecture and basis size, within the tested ranges; (ii) is selected by the variance regularization, as demonstrated by loss ablation; (iii) is reproduced by an independent LBM solver as a low-dissipation, quasi-stationary flow whose fluctuating kinetic energy remains below $1\%$; and (iv) is not universal, because at $\re=1000$ the modal concentration weakens, because a subset of random initializations reaches an equally admissible temporal branch, and because a modified-Chebyshev parametrization produces a temporally dominated branch that fails the adopted LBM admissibility test. We conclude that the second-mode-dominated control is a reproducible, \emph{parameterization-conditioned} branch of the identification problem rather than a universal optimum, and we recommend that physics-informed control identification be accompanied by systematic branch analysis and independent numerical verification before a recovered control is interpreted physically.
+
+\begin{acknowledgments}
+This work benefited from the reviewers' comments, which motivated the independent LBM verification, the actuation-energy, aspect-ratio, architecture, and seed campaigns, and the basis-comparison study. The source code to reproduce the reported results will be made available upon reasonable request to the corresponding author.
+\end{acknowledgments}
+
+\section*{Data and code availability}
+% AIP request: data and software availability statements plus dataset citation in the bibliography.
+The data (CSV tables) and codes (PINN and LBM) supporting this article are available in the public repository cited as Ref.~\onlinecite{repo2026}; see also the supplementary material.
+
+\begin{thebibliography}{99}
+
+\bibitem{repo2026}
+A. Beniaiche, A. Larabi, A. Dourari, and M. Belkadi, ``PINN identification and LBM validation of lid-driven-cavity control,'' public repository, https://github.com/geminiahmed25-Ahkat/pinn-lid-driven-cavity (2026).
+
+\bibitem{brunton2015closed} S. L. Brunton and B. R. Noack, ``Closed-loop turbulence control: Progress and challenges,'' Appl. Mech. Rev. \textbf{67}, 050801 (2015).
+
+\bibitem{gad2000flow} M. Gad-el-Hak, \emph{Flow Control: Passive, Active, and Reactive Flow Management} (Cambridge University Press, Cambridge, 2000).
+
+\bibitem{ghia1982high} U. Ghia, K. N. Ghia, and C. T. Shin, ``High-Re solutions for incompressible flow using the Navier--Stokes equations and a multigrid method,'' J. Comput. Phys. \textbf{48}, 387--411 (1982).
+
+\bibitem{bewley2001dns} T. R. Bewley, P. Moin, and R. Temam, ``DNS-based predictive control of turbulence: an optimal benchmark for feedback algorithms,'' J. Fluid Mech. \textbf{447}, 179--225 (2001).
+
+\bibitem{rowley2004model} C. W. Rowley, T. Colonius, and R. M. Murray, ``Model reduction for compressible flows using POD and Galerkin projection,'' Physica D \textbf{189}, 115--129 (2004).
+
+\bibitem{bergmann2005optimal} M. Bergmann, L. Cordier, and J.-P. Brancher, ``Optimal rotary control of the cylinder wake using proper orthogonal decomposition reduced-order model,'' Phys. Fluids \textbf{17}, 097101 (2005).
+
+\bibitem{noack2003hierarchy} B. R. Noack, K. Afanasiev, M. Morzy\'nski, G. Tadmor, and F. Thiele, ``A hierarchy of low-dimensional models for the transient and post-transient cylinder wake,'' J. Fluid Mech. \textbf{497}, 335--363 (2003).
+
+\bibitem{taira2017modal} K. Taira, S. L. Brunton, S. T. M. Dawson, C. W. Rowley, T. Colonius, B. J. McKeon, O. T. Schmidt, S. Gordeyev, V. Theofilis, and L. S. Ukeiley, ``Modal analysis of fluid flows: An overview,'' AIAA J. \textbf{55}, 4013--4041 (2017).
+
+\bibitem{rabault2019artificial} J. Rabault, M. Kuchta, A. Jensen, U. R\'eglade, and A. Cerardi, ``Artificial neural networks trained through deep reinforcement learning discover control strategies for active flow control,'' J. Fluid Mech. \textbf{865}, 281--302 (2019).
+
+\bibitem{raissi2019physics} M. Raissi, P. Perdikaris, and G. E. Karniadakis, ``Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations,'' J. Comput. Phys. \textbf{378}, 686--707 (2019).
+
+\bibitem{karniadakis2021physics} G. E. Karniadakis, I. G. Kevrekidis, L. Lu, P. Perdikaris, S. Wang, and L. Yang, ``Physics-informed machine learning,'' Nat. Rev. Phys. \textbf{3}, 422--440 (2021).
+
+\bibitem{raissi2020hidden} M. Raissi, A. Yazdani, and G. E. Karniadakis, ``Hidden fluid mechanics: Learning velocity and pressure fields from flow visualizations,'' Science \textbf{367}, 1026--1030 (2020).
+
+\bibitem{jin2021nsfnets} X. Jin, S. Cai, H. Li, and G. E. Karniadakis, ``NSFnets (Navier--Stokes flow nets): Physics-informed neural networks for the incompressible Navier--Stokes equations,'' J. Comput. Phys. \textbf{426}, 109951 (2021).
+
+\bibitem{sun2020surrogate} L. Sun, H. Gao, S. Pan, and J.-X. Wang, ``Surrogate modeling for fluid flows based on physics-constrained deep learning without simulation data,'' Comput. Methods Appl. Mech. Eng. \textbf{361}, 112732 (2020).
+
+\bibitem{wang2020understanding} S. Wang, Y. Teng, and P. Perdikaris, ``Understanding and mitigating gradient flow pathologies in physics-informed neural networks,'' SIAM J. Sci. Comput. \textbf{43}, A3055--A3081 (2021).
+
+\bibitem{cuomo2022} S. Cuomo, V. S. Di Cola, F. Giampaolo, G. Rozza, M. Raissi, and F. Piccialli, ``Scientific machine learning through physics-informed neural networks: Where we are and what is next,'' J. Sci. Comput. \textbf{92}, 88 (2022).
+
+\bibitem{velivelli2024pinn} A. Velivelli et al., ``Physics-informed neural network for the inverse identification of boundary conditions and model parameters,'' Phys. Fluids \textbf{36}, 023332 (2024).
+
+\bibitem{zeinhofer2022} M. Zeinhofer, ``A posteriori error estimates for non-parametric PINNs,'' arXiv:2203.03762 (2022).
+
+\bibitem{kingma2015adam} D. P. Kingma and J. Ba, ``Adam: A method for stochastic optimization,'' in \emph{Proceedings of the 3rd International Conference on Learning Representations (ICLR)}, San Diego (2015).
+
+\bibitem{brunton2016discovering} S. L. Brunton, J. L. Proctor, and J. N. Kutz, ``Discovering governing equations from data by sparse identification of nonlinear dynamical systems,'' Proc. Natl. Acad. Sci. U.S.A. \textbf{113}, 3932--3937 (2016).
+
+\bibitem{champion2019data} K. Champion, B. Lusch, J. N. Kutz, and S. L. Brunton, ``Data-driven discovery of coordinates and governing equations,'' Proc. Natl. Acad. Sci. U.S.A. \textbf{116}, 22445--22451 (2019).
+
+\bibitem{succi2001lattice} S. Succi, \emph{The Lattice Boltzmann Equation for Fluid Dynamics and Beyond} (Oxford University Press, Oxford, 2001).
+
+\bibitem{cranmer2023pysr} M. Cranmer et al., ``Interpretable machine learning for science with PySR and SymbolicRegression.jl,'' arXiv:2305.01582 (2023).
+
+\end{thebibliography}
+
+\end{document}

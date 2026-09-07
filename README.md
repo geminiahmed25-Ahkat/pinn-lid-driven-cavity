@@ -126,13 +126,18 @@ Indicative run times (CPU, 5 threads): baseline 6×5 ≈ 1 h; `architecture` lar
 
 ## 6. License
 
-Copyright (c) 2026 Ahmed Beniaiche
+Ahmed Beniaiche – Non-Commercial Research Software License
+Version 1.0 – 2026
+Commercial Use Prohibited
 
-This project is licensed under the Apache License, Version 2.0.
-You may use, reproduce, modify, and redistribute this software
-in accordance with the terms and conditions of the Apache License 2.0.
+The Software is provided solely for non-commercial research, educational, academic, and personal purposes.
 
-The full license text is provided in the `LICENSE` file.
+Any commercial use of the Software, including but not limited to use in a commercial product, service, consulting activity, industrial application, proprietary software, or revenue-generating activity, is strictly prohibited without the prior written permission of the copyright holder, Ahmed Beniaiche.
+
+Any scientific publication, conference paper, thesis, dissertation, technical report, dataset, presentation, or other scholarly work that uses or substantially relies upon the Software must appropriately acknowledge the author and cite the associated scientific publication.
+
+The copyright and attribution notices contained in the Software must not be removed or altered.
+
 ## 7. Statements for the manuscript
 
 1. The historical code (`historical_baseline/`) has **never been modified**.
